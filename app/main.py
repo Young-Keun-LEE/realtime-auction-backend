@@ -1,0 +1,12 @@
+from fastapi import FastAPI
+from app.core.config import settings
+
+app = FastAPI(title=settings.PROJECT_NAME)
+
+@app.get("/")
+def health_check():
+    return {
+        "status": "ok", 
+        "message": "Auction Server is Running! 🚀",
+        "redis_url": settings.REDIS_URL  # to verify that the configuration was loaded correctly 
+    }

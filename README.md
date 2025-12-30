@@ -255,13 +255,9 @@ The following metrics are **design targets**:
 
 
 | Metric        | Target Goal     | Description                                                        |
-
 |--------------|-----------------|--------------------------------------------------------------------|
-
 | Throughput   | **1,000+ TPS**  | Sustainably handle 1,000+ bid requests per second on a single node |
-
 | Latency P99  | **< 200 ms**    | 99% of requests should complete within 200 ms                      |
-
 | Consistency  | **≈ 100%**      | Zero over-selling / double-winning bids under concurrent test load |
 
 
@@ -283,19 +279,12 @@ The following metrics are **design targets**:
 
 
 | Category  | Tech             | Why Selected?                                                                 |
-
 |-----------|------------------|-------------------------------------------------------------------------------|
-
 | Language  | Python 3.10      | Fast prototyping, mature `asyncio` ecosystem                                |
-
 | Framework | FastAPI          | High-performance async I/O, type hints, great DX (vs Flask/Django)          |
-
 | Database  | PostgreSQL 15    | Reliable ACID guarantees, strong support for transactional integrity        |
-
 | Cache/Msg | Redis            | In-memory speed for locking and Pub/Sub-based real-time messaging           |
-
 | Protocol  | WebSocket        | Bi-directional, low-overhead real-time communication vs polling/long-poll   |
-
 | Testing   | Locust           | Python-based load testing with scenario scripting support                   |
 
 

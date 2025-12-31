@@ -18,3 +18,9 @@ class AuctionResponse(BaseModel):
     class Config:
         # Allow creating this schema directly from ORM objects (SQLAlchemy models)
         from_attributes = True
+
+# 4. Data received when placing a bid
+class BidRequest(BaseModel):
+    user_id: int
+    auction_id: int
+    amount: int

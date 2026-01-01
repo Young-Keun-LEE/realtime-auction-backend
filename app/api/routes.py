@@ -3,12 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
 import redis.asyncio as redis
-
 from app.core.config import settings
 from app.db.session import get_db, AsyncSessionLocal
 from app.db.models import User, Auction, Bid
 from app.schemas.auction import UserCreate, AuctionCreate, AuctionResponse, BidRequest
 from app.services.lock import RedisDistributedLock  # Redis-based distributed lock
+from app.services.websocket import manager
+from fastapi import WebSocket, WebSocketDisconnect
 
 router = APIRouter()
 redis_client = redis.from_url(settings.REDIS_URL)
@@ -110,8 +111,21 @@ async def place_bid(
     #    The client does not wait for this to complete (lower latency).
     background_tasks.add_task(save_bid_to_db, bid_req.dict())
 
+    # 6. Notify all connected WebSocket clients about the new bid
+    message = f"{bid_req.auction_id}:{bid_req.amount}"
+    await redis_client.publish("auction_channel", message)
+
     return {"status": "success", "new_price": bid_req.amount}
 
+@router.websocket("/ws/auction")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 async def save_bid_to_db(bid_data: dict):
     """

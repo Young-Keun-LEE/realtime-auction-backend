@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python)
 
-![FastAPI](https://img.shields.io/badge/FastAPI-0.95-009688?logo=fastapi)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688?logo=fastapi)
 
 ![Redis](https://img.shields.io/badge/Redis-Distributed__Lock-DC382D?logo=redis)
 
@@ -250,7 +250,7 @@ graph TD
 
 Using Locust, the system will be stress-tested with realistic user flows and traffic patterns.  
 
-The following metrics are **design targets**:
+The following metrics are **design targets** for the overall architecture:
 
 
 
@@ -262,11 +262,10 @@ The following metrics are **design targets**:
 
 
 
-> 📌 **Planned Benchmarks**  
-
-> - Compare performance **before/after** applying Redis locks and caching  
-
-> - Start with a single instance, then consider horizontal scaling scenarios
+> 📌 **Planned Benchmarks vs. Verified Results**  
+> - Design targets are defined above (10,000+ concurrent users, 1,000+ TPS).  
+> - Verified results from Locust load testing on a single node are documented in the **Load Testing (Locust)** section below.  
+> - For 10,000+ concurrent users, the system is designed to scale horizontally (multiple FastAPI instances behind a load balancer, Redis as shared coordination layer), but this scale has not been empirically tested on local hardware.
 
 
 
@@ -297,12 +296,125 @@ The following metrics are **design targets**:
 
 
 
-- [ ] Domain modeling for core entities (Auction, Bid, User, etc.)
+- [x] Domain modeling for core entities (Auction, Bid, User, etc.)
 
-- [ ] Implement bid API (`POST /bid`) with Redis-based distributed locking
+- [x] Implement bid API (`POST /bid`) with Redis-based distributed locking
 
-- [ ] Implement WebSocket endpoint for real-time bid updates
+- [x] Implement WebSocket endpoint for real-time bid updates
 
-- [ ] Implement async persistence (write-behind) from Redis to PostgreSQL
+- [x] Implement async persistence (write-behind) from Redis cache to PostgreSQL using FastAPI `BackgroundTasks`
 
-- [ ] Design and run Locust load test scenarios, then document results here
+- [x] Design and run Locust load test scenarios, then document results here
+
+
+
+---
+
+
+
+---
+
+
+
+## 🔮 6. Future Improvements
+
+- [ ] Horizontal Scaling: Deploy multiple API instances behind a Load Balancer (Nginx) to support 10,000+ users.
+
+- [ ] Message Queue: Replace background tasks with Kafka/RabbitMQ for better reliability.
+
+
+
+---
+
+
+
+## 🚀 7. Getting Started
+
+### Option 1: Run with Docker Compose
+
+```bash
+docker-compose up -d --build
+```
+
+- API base URL: `http://localhost:8000`
+- Interactive API docs (Swagger UI): `http://localhost:8000/docs`
+
+To stop all containers:
+
+```bash
+docker-compose down
+```
+
+
+### Option 2: Run locally (without Docker)
+
+1. Start PostgreSQL and Redis (locally or via containers).
+2. Install dependencies:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+3. Run the application:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+- API base URL: `http://localhost:8000`
+- Interactive API docs (Swagger UI): `http://localhost:8000/docs`
+
+
+### Run Locust load tests
+
+```bash
+locust -f tests/locustfile.py --host http://localhost:8000
+```
+
+Then open `http://localhost:8089` in your browser to start a load test.
+
+
+---
+
+
+
+## 📈 8. Load Testing (Locust)
+
+To validate the concurrency control and throughput of the bidding API, the system was load tested using Locust.
+
+![Locust load test results](images/locust-summary.png)
+
+### Test Scenario
+
+- Target endpoint: `POST /api/v1/bid`
+- Virtual users: **1,000** concurrent users
+- User behavior:
+   - Each user repeatedly submits bids for the same auction item
+   - Bid amount is randomized within a configured price range
+   - Think time between requests: 1–3 seconds (`wait_time = between(1, 3)`)
+- Concurrency control: Redis-based distributed lock around the critical section
+
+
+### Test Environment
+
+- Application stack: FastAPI + Uvicorn, Redis, PostgreSQL
+- Deployment: Single FastAPI application instance
+- Redis and PostgreSQL: Docker containers
+- Load generator: Locust running on the same machine as the application
+
+
+### Results (example run)
+
+- Concurrent users: **1,000**
+- Peak throughput: **≈ 495 requests/second (RPS)**
+- Failures: **0%**
+- Latency:
+   - Median (p50): generally in the low **tens of milliseconds**
+   - 95th percentile (p95): mostly below **~100 ms**, with a short spike during ramp-up
+
+
+### Interpretation
+
+- The system can sustain ~500 bid requests per second on a single node with **zero errors**, while preserving data consistency via the Redis-based distributed lock.
+- Short p95 latency spikes during ramp-up are expected as connections are established; latency stabilizes once the system reaches a steady state.
+- These results validate the architectural choices (async FastAPI, Redis locking, in-memory processing with asynchronous persistence) for high-concurrency bidding workloads on a single node. Horizontal scaling (multiple application instances behind a load balancer) can further increase the number of concurrently connected users toward the design targets.

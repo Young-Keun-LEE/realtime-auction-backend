@@ -1,0 +1,8 @@
+# Include production dependencies
+-r requirements.txt
+
+# Testing & Development
+httpx==0.27.0              # Async HTTP client
+locust==2.24.0             # Load/performance testing
+pytest==8.0.0              # Test framework
+pytest-asyncio==0.23.0     # Async test support

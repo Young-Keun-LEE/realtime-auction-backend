@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. PostgreSQL (persistent data storage)
+  # 1. PostgreSQL (DB)
   db:
     image: postgres:15-alpine
     container_name: auction_db
@@ -15,18 +15,53 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - auction_net
+    # [Key Addition] Self-check if DB is truly ready
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d auction"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-  # 2. Redis (cache, locking, Pub/Sub)
+  # 2. Redis (Cache)
   redis:
     image: redis:7-alpine
     container_name: auction_redis
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes  # data persistence option
+    command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
     networks:
       - auction_net
+    # It's safer to check Redis health with a ping.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 3. Web Server (FastAPI)
+  web:
+    image: justdanny0/realtime-auction-backend:v1
+    container_name: auction_web
+    ports:
+      - "8000:8000"
+    networks:
+      - auction_net
+    # Start only when DB and Redis are 'healthy'
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Variables mapped to the Settings class in the code
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=auction
+      - POSTGRES_HOST=db       # Service name becomes the hostname
+      - POSTGRES_PORT=5432
+      - REDIS_URL=redis://redis:6379
 
 volumes:
   postgres_data:

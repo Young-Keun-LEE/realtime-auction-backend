@@ -12,7 +12,9 @@
 
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)
 
+![CI/CD](https://github.com/Young-Keun-LEE/realtime-auction-backend/actions/workflows/deploy.yml/badge.svg)
 
+![AWS](https://img.shields.io/badge/AWS-EC2-232F3E?logo=amazon-aws)
 
 - Design target: 10,000+ concurrently connected users
 
@@ -200,7 +202,9 @@ graph TD
 
 2. **Concurrency Control (Locking)**  
 
-   - The API server obtains a lock for a specific auction item using Redis (`SETNX` style).
+   - Single-Redis based lock (SETNX + expiration).
+
+   -  Redlock was intentionally not adopted due to its complexity and debated safety guarantees.
 
    - **Only one request that acquires the lock** can enter the critical section for that item.
 
@@ -241,11 +245,49 @@ graph TD
 
 
 ---
+## 🚀 3. CI/CD & Cloud Infrastructure
 
+To ensure reliability and rapid iteration, I constructed a fully automated deployment pipeline replacing manual SSH operations. The system adheres to the 12-Factor App methodology, strictly separating configuration (secrets) from code.
 
+```mermaid
+sequenceDiagram
+    participant Dev as Local Developer
+    participant GH as GitHub Repository
+    participant Action as GitHub Actions (CI/CD)
+    participant Hub as Docker Hub
+    participant EC2 as AWS EC2 (Production)
 
-## 📊 3. Performance Goals (KPIs)
+    Dev->>GH: git push (main)
+    activate Action
+    GH->>Action: Trigger Workflow
+    
+    Note over Action: 1. Build & Test
+    Action->>Action: Build Docker Image
+    
+    Note over Action: 2. Publish Artifact
+    Action->>Hub: Push Image (v1, latest)
+    
+    Note over Action: 3. Deploy
+    Action->>EC2: SSH Connection
+    activate EC2
+    EC2->>Hub: docker compose pull
+    Hub-->>EC2: Download New Image
+    EC2->>EC2: Recreate Containers (Zero-touch)
+    deactivate EC2
+    deactivate Action
+```
 
+## 🛡️ Security Engineering (Secret Management)
+Directly managing docker-compose.yml with hardcoded credentials poses a significant security risk. I implemented a Dynamic Environment Injection strategy:
+
+Storage: All sensitive data (DB passwords, API keys) are encrypted and stored in GitHub Secrets.
+
+Injection: During the CD phase, GitHub Actions dynamically generates a ephemeral .env file on the EC2 instance.
+
+Result: No sensitive data exists in the source code or the Docker image, minimizing the attack surface. 
+
+---
+## 📊 4. Performance Goals (KPIs)
 
 
 Using Locust, the system will be stress-tested with realistic user flows and traffic patterns.  
@@ -273,7 +315,7 @@ The following metrics are **design targets** for the overall architecture:
 
 
 
-## 🛠️ 4. Tech Stack & Rationale
+## 🛠️ 5. Tech Stack & Rationale
 
 
 
@@ -285,14 +327,14 @@ The following metrics are **design targets** for the overall architecture:
 | Cache/Msg | Redis            | In-memory speed for locking and Pub/Sub-based real-time messaging           |
 | Protocol  | WebSocket        | Bi-directional, low-overhead real-time communication vs polling/long-poll   |
 | Testing   | Locust           | Python-based load testing with scenario scripting support                   |
-
+| DevOps    | Docker Hub, GitHub Actions, AWS EC2 | **Automated CI/CD pipeline** for zero-downtime deployment & immutable infrastructure |
 
 
 ---
 
 
 
-## 🚧 5. Roadmap (To-Do)
+## 🚧 6. Roadmap (To-Do)
 
 
 
@@ -312,11 +354,7 @@ The following metrics are **design targets** for the overall architecture:
 
 
 
----
-
-
-
-## 🔮 6. Future Improvements
+## 🔮 7. Future Improvements
 
 - [ ] Horizontal Scaling: Deploy multiple API instances behind a Load Balancer (Nginx) to support 10,000+ users.
 
@@ -328,7 +366,7 @@ The following metrics are **design targets** for the overall architecture:
 
 
 
-## 🚀 7. Getting Started
+## 🚀 8. Getting Started
 
 ### Option 1: Run with Docker Compose
 
@@ -378,7 +416,7 @@ Then open `http://localhost:8089` in your browser to start a load test.
 
 
 
-## 📈 8. Load Testing (Locust)
+## 📈 9. Load Testing (Locust)
 
 To validate the concurrency control and throughput of the bidding API, the system was load tested using Locust.
 

@@ -45,6 +45,12 @@ jobs:
           # Commands to run inside EC2
           cd practice/realtime-auction-backend
           
+          # [Add] Create .env file (write each value from Secrets line by line)
+          echo "POSTGRES_USER=${{ secrets.DB_USER }}" > .env
+          echo "POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+          echo "POSTGRES_DB=${{ secrets.DB_NAME }}" >> .env
+          echo "REDIS_URL=redis://redis:6379" >> .env  
+
           # Pull latest code (optional, for updating docker-compose.yml)
           git pull origin main
           
@@ -56,3 +62,4 @@ jobs:
           
           # Remove unused images (free up space)
           docker image prune -f
+  

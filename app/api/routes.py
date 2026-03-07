@@ -1,14 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update
 import redis.asyncio as redis
 from app.core.config import settings
-from app.db.session import get_db, AsyncSessionLocal
+from app.db.session import get_db
 from app.db.models import User, Auction, Bid
 from app.schemas.auction import UserCreate, AuctionCreate, AuctionResponse, BidRequest
 from app.services.lock import RedisDistributedLock  # Redis-based distributed lock
 from app.services.websocket import manager
+from app.services.kafka import KafkaService
 from fastapi import WebSocket, WebSocketDisconnect
 
 router = APIRouter()
@@ -47,7 +47,6 @@ async def get_auctions(db: AsyncSession = Depends(get_db)):
 @router.post("/bid")
 async def place_bid(
     bid_req: BidRequest,
-    background_tasks: BackgroundTasks,  # Used to schedule async work after response
     db: AsyncSession = Depends(get_db),
 ):
     # Base key for this auction in Redis (e.g., auction:1)
@@ -102,14 +101,14 @@ async def place_bid(
 
         # 4. Apply the new bid in Redis
         #    I only touch Redis here to keep the critical section as fast as possible.
-        #    DB persistence will be handled asynchronously after the response.
+        #    DB persistence will be handled asynchronously via Kafka.
         await redis_client.set(f"{auction_key}:price", bid_req.amount)
 
         # === 🔒 Critical Section END ===
 
-    # 5. Persist the bid to the database asynchronously
+    # 5. Publish the bid to Kafka for asynchronous database persistence
     #    The client does not wait for this to complete (lower latency).
-    background_tasks.add_task(save_bid_to_db, bid_req.dict())
+    await KafkaService.publish_bid(bid_req.dict())
 
     # 6. Notify all connected WebSocket clients about the new bid
     message = f"{bid_req.auction_id}:{bid_req.amount}"
@@ -126,41 +125,3 @@ async def websocket_endpoint(websocket: WebSocket):
             
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-
-async def save_bid_to_db(bid_data: dict):
-    """
-    Persist the bid to the database in the background.
-
-    IMPORTANT:
-    - BackgroundTasks run outside the original request lifecycle.
-    - I must NOT reuse the request-scoped AsyncSession here.
-    - Instead, we create a new AsyncSession for this background job.
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            # 1) Insert a new Bid row
-            new_bid = Bid(
-                user_id=bid_data["user_id"],
-                auction_id=bid_data["auction_id"],
-                price=bid_data["amount"],
-            )
-            session.add(new_bid)
-
-            # 2) Update the Auction's current_price
-            stmt = (
-                update(Auction)
-                .where(Auction.id == bid_data["auction_id"])
-                .values(current_price=bid_data["amount"])
-            )
-            await session.execute(stmt)
-
-            # 3) Commit the transaction
-            await session.commit()
-            print(
-                f"✅ [DB Saved] Auction {bid_data['auction_id']} updated to {bid_data['amount']}"
-            )
-
-        except Exception as e:
-            # If anything fails, roll back this transaction
-            await session.rollback()
-            print(f"❌ [DB Error] Failed to save bid: {e}")

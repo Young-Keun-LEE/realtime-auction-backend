@@ -8,6 +8,7 @@ from app.db.session import engine
 from app.db.models import Base
 from app.api.routes import router as api_router
 from app.services.websocket import manager
+from app.services.kafka import KafkaService, consume_and_save_bids
 
 redis_subscriber = redis.from_url(settings.REDIS_URL)
 
@@ -31,13 +32,16 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    task = asyncio.create_task(redis_listener())
+    redis_task = asyncio.create_task(redis_listener())
+    kafka_task = asyncio.create_task(consume_and_save_bids())
 
     # Application runs and serves requests between yield and the code below
     yield
 
     # 2. On server shutdown: clean up resources
-    task.cancel()
+    redis_task.cancel()
+    kafka_task.cancel()
+    await KafkaService.close()
     print("🛑 Shutting down...")
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)

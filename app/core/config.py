@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_URL: str
+    
+    # Kafka
+    KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"
+    KAFKA_BID_TOPIC: str = "auction-bids"
 
     @property
     def DATABASE_URL(self) -> str:

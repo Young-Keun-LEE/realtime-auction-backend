@@ -43,74 +43,62 @@ async def get_auctions(db: AsyncSession = Depends(get_db)):
     auctions = result.scalars().all()
     return auctions
 
+BID_LUA_SCRIPT = """
+local current_price = redis.call('get', KEYS[1])
+if current_price then
+    if tonumber(ARGV[1]) <= tonumber(current_price) then
+        return 0
+    end
+    redis.call('set', KEYS[1], ARGV[1])
+    return 1
+else
+    return -1
+end
+"""
+
 # 4. Place a bid on an auction item
 @router.post("/bid")
 async def place_bid(
     bid_req: BidRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    # Base key for this auction in Redis (e.g., auction:1)
-    auction_key = f"auction:{bid_req.auction_id}"
+    # Redis key for storing the current price of the auction
+    auction_price_key = f"auction:{bid_req.auction_id}:price"
 
-    # 1. Try to acquire a distributed lock for this auction
-    #    This ensures only one request can update this auction at a time
-    lock = RedisDistributedLock(redis_client, f"auction:{bid_req.auction_id}")
+    # Execute Lua script to atomically check and update the bid price in Redis
+    # Returns: -1 (key not found), 0 (bid too low), 1 (bid accepted)
+    result = await redis_client.eval(BID_LUA_SCRIPT, 1, auction_price_key, bid_req.amount)
 
-    async with lock as acquired:
-        if not acquired:
-            # Could not acquire the lock: another bid is being processed right now
-            # Fail fast instead of blocking the client
-            raise HTTPException(
-                status_code=429,
-                detail="Another bid is currently being processed. Please try again shortly.",
-            )
-
-        # === 🔒 Critical Section START ===
-        # Only one request per auction_id is allowed to execute this block at a time
-
-        # 2. Load current price
-        #    First try Redis (in-memory cache, very fast)
-        current_price = await redis_client.get(f"{auction_key}:price")
-
-        if current_price:
-            # Redis returned a cached price (bytes/str -> int)
-            current_price = int(current_price)
-        else:
-            # Cache miss: fall back to the database
-            auction = await db.get(Auction, bid_req.auction_id)
-            if not auction:
-                # Auction does not exist in the database
-                raise HTTPException(
-                    status_code=404,
-                    detail="Auction not found.",
-                )
-
-            # Use DB value as the source of truth for the initial price
-            current_price = auction.current_price
-
-            # Cache the current price in Redis so future requests are fast
-            await redis_client.set(f"{auction_key}:price", current_price)
-
-        # 3. Validate the new bid amount
-        #    Business rule: the bid must be strictly higher than the current price
-        if bid_req.amount <= current_price:
+    # Case 1: Redis key doesn't exist yet (first bid or cache miss)
+    if result == -1:
+        # Fetch auction from database to verify existence and get current price
+        auction = await db.get(Auction, bid_req.auction_id)
+        if not auction:
+            raise HTTPException(status_code=404, detail="Auction not found.")
+        
+        # Validate bid amount against DB price
+        if bid_req.amount <= auction.current_price:
+            # Initialize Redis cache with current DB price
+            await redis_client.set(auction_price_key, auction.current_price)
             raise HTTPException(
                 status_code=400,
-                detail=f"Bid amount must be higher than the current price ({current_price}).",
+                detail=f"Bid amount must be higher than current price ({auction.current_price})."
             )
-
-        # 4. Apply the new bid in Redis
-        #    I only touch Redis here to keep the critical section as fast as possible.
-        #    DB persistence will be handled asynchronously via Kafka.
-        await redis_client.set(f"{auction_key}:price", bid_req.amount)
-
-        # === 🔒 Critical Section END ===
-
-    # 5. Publish the bid to Kafka for asynchronous database persistence
-    #    The client does not wait for this to complete (lower latency).
+            # Set the new bid price in Redis cache
+            await redis_client.set(auction_price_key, bid_req.amount)
+    
+    # Case 2: Bid amount is not higher than current cached price
+    elif result == 0:
+        current_price = await redis_client.get(auction_price_key)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bid amount must be higher than the current price ({current_price.decode() if current_price else 'unknown'}).",
+        )
+    
+    # Publish bid event to Kafka for asynchronous DB persistence
     await KafkaService.publish_bid(bid_req.dict())
 
-    # 6. Notify all connected WebSocket clients about the new bid
+    # Publish price update to Redis pub/sub for real-time WebSocket broadcasting
     message = f"{bid_req.auction_id}:{bid_req.amount}"
     await redis_client.publish("auction_channel", message)
 

@@ -14,7 +14,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 router = APIRouter()
 redis_client = redis.from_url(settings.REDIS_URL)
 
-# 1. Create a test user
+# 1. Create a user
 @router.post("/users")
 async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     new_user = User(username=user.username)

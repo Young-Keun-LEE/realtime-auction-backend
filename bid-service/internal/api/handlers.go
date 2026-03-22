@@ -18,10 +18,11 @@ type Handler struct {
 	db   *sql.DB
 	rdb  *redis.Client
 	pool *worker.Pool
+	ctx  context.Context
 }
 
-func NewHandler(db *sql.DB, rdb *redis.Client, pool *worker.Pool) *Handler {
-	return &Handler{db: db, rdb: rdb, pool: pool}
+func NewHandler(db *sql.DB, rdb *redis.Client, pool *worker.Pool, ctx context.Context) *Handler {
+	return &Handler{db: db, rdb: rdb, pool: pool, ctx: ctx}
 }
 
 func (h *Handler) PlaceBid(c *gin.Context) {
@@ -34,12 +35,10 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 
 	log.Printf("📥 Received bid: user_id=%d, auction_id=%d, amount=%d",
 		req.UserID, req.AuctionID, req.Amount)
-	
-	reqCtx := c.Request.Context()
 
 	auctionPriceKey := fmt.Sprintf("auction:%d:price", req.AuctionID)
 
-	result, err := repository.EvalBidScript(reqCtx, h.rdb, models.BidLuaScript, auctionPriceKey, req.Amount)
+	result, err := repository.EvalBidScript(h.ctx, h.rdb, models.BidLuaScript, auctionPriceKey, req.Amount)
 	if err != nil {
 		log.Printf("❌ Redis Lua script error: %v", err)
 		c.JSON(500, gin.H{"detail": "Internal server error"})
@@ -49,7 +48,7 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 	if result == -1 {
 		log.Printf("🔍 Cache miss for auction %d, querying database...", req.AuctionID)
 
-		auction, err := repository.GetAuctionByID(reqCtx, h.db, req.AuctionID)
+		auction, err := repository.GetAuctionByID(h.db, req.AuctionID)
 		if err == sql.ErrNoRows {
 			log.Printf("❌ Auction %d not found", req.AuctionID)
 			c.JSON(404, gin.H{"detail": "Auction not found"})
@@ -62,18 +61,18 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 
 		if req.Amount <= auction.CurrentPrice {
 			log.Printf("⚠️  Bid too low: %d <= %d", req.Amount, auction.CurrentPrice)
-			_ = repository.SetAuctionPrice(reqCtx, h.rdb, auctionPriceKey, auction.CurrentPrice)
+			_ = repository.SetAuctionPrice(h.ctx, h.rdb, auctionPriceKey, auction.CurrentPrice)
 			c.JSON(400, gin.H{
 				"detail": fmt.Sprintf("Bid amount must be higher than current price (%d)", auction.CurrentPrice),
 			})
 			return
 		}
 
-		if err := repository.SetAuctionPrice(reqCtx, h.rdb, auctionPriceKey, req.Amount); err != nil {
+		if err := repository.SetAuctionPrice(h.ctx, h.rdb, auctionPriceKey, req.Amount); err != nil {
 			log.Printf("❌ Failed to set Redis cache: %v", err)
 		}
 	} else if result == 0 {
-		currentPrice, _ := repository.GetAuctionPrice(reqCtx, h.rdb, auctionPriceKey)
+		currentPrice, _ := repository.GetAuctionPrice(h.ctx, h.rdb, auctionPriceKey)
 		log.Printf("⚠️  Bid rejected: %d <= current price %d", req.Amount, currentPrice)
 		c.JSON(400, gin.H{
 			"detail": fmt.Sprintf("Bid amount must be higher than the current price (%d)", currentPrice),

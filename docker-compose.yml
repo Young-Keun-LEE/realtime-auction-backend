@@ -1,7 +1,9 @@
 version: '3.8'
 
 services:
-  # 1. PostgreSQL (DB)
+  # -------------------------------------------
+  # Infrastructure
+  # -------------------------------------------
   db:
     image: postgres:15-alpine
     container_name: auction_db
@@ -15,14 +17,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - auction_net
-    # [Key Addition] Self-check if DB is truly ready
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # 2. Redis (Cache)
   redis:
     image: redis:7-alpine
     container_name: auction_redis
@@ -33,36 +33,12 @@ services:
       - redis_data:/data
     networks:
       - auction_net
-    # It's safer to check Redis health with a ping.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
 
-  # 3. Web Server (FastAPI)
-  web:
-    image: justdanny0/realtime-auction-backend:v1
-    container_name: auction_web
-    ports:
-      - "8000:8000"
-    networks:
-      - auction_net
-    # Start only when DB and Redis are 'healthy'
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_HOST=db
-      - POSTGRES_PORT=5432
-      - REDIS_URL=redis://redis:6379
-
-  # 3. Zookeeper (required by Kafka)
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: auction_zookeeper
@@ -74,7 +50,6 @@ services:
     networks:
       - auction_net
 
-  # 4. Kafka (message broker)
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: auction_kafka
@@ -93,6 +68,87 @@ services:
       - kafka_data:/var/lib/kafka/data
     networks:
       - auction_net
+
+  # -------------------------------------------
+  # Application Layer (Microservices)
+  # -------------------------------------------
+
+  # 1. High-throughput Bid Ingestion API (Go)
+  bid-api:
+    build: 
+      context: ./bid-service
+      dockerfile: Dockerfile
+    container_name: auction_bid_api_go
+    ports:
+      - "8080:8080" # Accept bid requests from outside on port 8080.
+    networks:
+      - auction_net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - REDIS_ADDR=redis:6379
+      - KAFKA_BROKER=kafka:29092 # Use port 29092 within the Docker network.
+      - KAFKA_TOPIC=auction-bids
+      - WORKER_COUNT=100
+
+  # 2. WebSocket and Notification Server (Python FastAPI)
+  ws-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: auction_ws_server_python
+    # Override the default Dockerfile CMD and run in web server mode.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000" # Expose WebSocket connections externally on port 8000.
+    networks:
+      - auction_net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - REDIS_URL=redis://redis:6379
+
+  # 3. Background Kafka Worker (Python Script)
+  bid-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: auction_worker_python
+    # Run only the worker script in an infinite loop (no FastAPI server).
+    command: python -m app.worker
+    # No port mapping needed because the background worker has no direct external traffic.
+    networks:
+      - auction_net
+    depends_on:
+      db:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
 
 volumes:
   postgres_data:

@@ -4,13 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 
-	"bid-service/config"
 	"bid-service/internal/models"
 )
 
-func NewPostgresDB(cfg config.DBConfig) (*sql.DB, error) {
+func NewPostgresDB(host, port, user, password, dbName string) (*sql.DB, error) {
 	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Name)
+		host, port, user, password, dbName)
 	return sql.Open("postgres", connStr)
 }
 

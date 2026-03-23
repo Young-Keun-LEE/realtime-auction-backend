@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -83,6 +84,7 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 	log.Printf("✅ Bid accepted: auction_id=%d, amount=%d", req.AuctionID, req.Amount)
 
 	h.pool.Submit(models.BidTask{
+		BidID:    uuid.New().String(),
 		UserID:    req.UserID,
 		AuctionID: req.AuctionID,
 		Amount:    req.Amount,

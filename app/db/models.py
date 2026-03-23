@@ -32,6 +32,7 @@ class Bid(Base):
     __tablename__ = "bids"
 
     id = Column(Integer, primary_key=True, index=True)
+    bid_id = Column(String, unique=True, index=True, nullable=False)  # unique bid identifier
     price = Column(Integer, nullable=False)  # bid amount
     created_at = Column(
         DateTime(timezone=True),

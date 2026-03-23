@@ -26,7 +26,8 @@ type Auction struct {
 }
 
 type BidTask struct {
-	UserID    int
-	AuctionID int
-	Amount    int
+	BidID 	  string `json:"bid_id"`
+	UserID    int    `json:"user_id"`
+	AuctionID int    `json:"auction_id"`
+	Amount    int    `json:"amount"`
 }

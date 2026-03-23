@@ -92,13 +92,19 @@ async def save_bid_to_db(bid_data: dict):
     """
     async with AsyncSessionLocal() as session:
         try:
-            # 1) Insert a new Bid row
-            new_bid = Bid(
-                user_id=bid_data["user_id"],
-                auction_id=bid_data["auction_id"],
+            # 1) Insert a new Bid row with idempotency check
+            stmt = Insert(Bid).values(
+                bid_id=bid_data["bid_id"],
                 price=bid_data["amount"],
+                user_id=bid_data["user_id"],
+                auction_id=bid_data["auction_id"]
             )
-            session.add(new_bid)
+            stmt = stmt.on_conflict_do_nothing(index_elements=['bid_id'])
+            result = await session.execute(stmt)
+
+            if result.rowcount == 0:
+                print(f"⚠️ [Idempotent] Already processed bid ignored: {bid_data['bid_id']}")
+                return
 
             # 2) Update the Auction's current_price
             stmt = (

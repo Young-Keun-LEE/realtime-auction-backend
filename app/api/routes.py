@@ -6,7 +6,6 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.db.models import User, Auction, Bid
 from app.schemas.auction import UserCreate, AuctionCreate, AuctionResponse, BidRequest
-from app.services.lock import RedisDistributedLock  # Redis-based distributed lock
 from app.services.websocket import manager
 from app.services.kafka import KafkaService
 from fastapi import WebSocket, WebSocketDisconnect

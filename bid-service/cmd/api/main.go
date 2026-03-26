@@ -57,7 +57,7 @@ func main() {
 
 	// Setup Router and API routes
 	r := gin.Default()
-	h := api.NewHandler(db, rdb, pool)
+		h := api.NewHandler(db, rdb, pool)
 	api.RegisterRoutes(r, h)
 
 	// Create HTTP server

@@ -1,10 +1,12 @@
+# app/services/kafka.py
 import json
 import asyncio
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import update
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.db.models import Auction, Bid
-from sqlalchemy import update
 
 class KafkaService:
     """Manages Kafka producer and consumer for the auction system."""
@@ -14,7 +16,6 @@ class KafkaService:
     
     @classmethod
     async def get_producer(cls) -> AIOKafkaProducer:
-        """Get or create the Kafka producer."""
         if cls._producer is None:
             cls._producer = AIOKafkaProducer(
                 bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
@@ -26,27 +27,25 @@ class KafkaService:
     
     @classmethod
     async def publish_bid(cls, bid_data: dict) -> None:
-        """Publish a bid event to Kafka."""
         producer = await cls.get_producer()
         try:
             await producer.send_and_wait(
                 settings.KAFKA_BID_TOPIC,
                 value=bid_data
             )
-            print(f"📤 [Kafka Published] Bid: {bid_data}")
         except Exception as e:
             print(f"❌ [Kafka Error] Failed to publish bid: {e}")
     
     @classmethod
     async def get_consumer(cls) -> AIOKafkaConsumer:
-        """Get the Kafka consumer for bid events."""
         if cls._consumer is None:
             cls._consumer = AIOKafkaConsumer(
                 settings.KAFKA_BID_TOPIC,
                 bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
                 group_id="auction-processor",
                 value_deserializer=lambda m: json.loads(m.decode('utf-8')),
-                auto_offset_reset='earliest'
+                auto_offset_reset='earliest',
+                enable_auto_commit=False 
             )
             await cls._consumer.start()
             print("✅ Kafka Consumer Started")
@@ -54,73 +53,90 @@ class KafkaService:
     
     @classmethod
     async def close(cls) -> None:
-        """Close both producer and consumer."""
         if cls._producer:
             await cls._producer.stop()
-            print("🛑 Kafka Producer Stopped")
         if cls._consumer:
             await cls._consumer.stop()
-            print("🛑 Kafka Consumer Stopped")
 
 
 async def consume_and_save_bids():
     """
-    Consumer that listens to Kafka bids topic and saves them to the database.
-    This runs as a background task in the application lifecycle.
+    Consumer that listens to Kafka bids topic and saves them to the database in BATCHES.
     """
     consumer = await KafkaService.get_consumer()
     
-    try:
-        async for message in consumer:
-            bid_data = message.value
-            print(f"📥 [Kafka Consumed] Bid: {bid_data}")
-            
-            # Save the bid to the database
-            await save_bid_to_db(bid_data)
-    except asyncio.CancelledError:
-        print("🛑 Bid consumer cancelled")
-    except Exception as e:
-        print(f"❌ [Consumer Error] {e}")
+    while True:
+        try:
+            # 1: Wait up to 1 second (1000ms), or fetch once when 1000 messages are buffered.
+            batch_data = await consumer.getmany(timeout_ms=1000, max_records=1000)
+
+            if not batch_data:
+                continue  # Skip if no bids arrived during this 1-second window.
+
+            # Flatten partition-grouped records into a single list.
+            bids_to_process = []
+            for tp, messages in batch_data.items():
+                for message in messages:
+                    bids_to_process.append(message.value)
+
+            if bids_to_process:
+                print(f"📦 [Batch Processing] Received {len(bids_to_process)} bids in this window.")
+                await save_bids_batch_to_db(bids_to_process)
+                await consumer.commit()  # Manual commit: commit offsets only after successful batch processing.
+        except asyncio.CancelledError:
+            print("🛑 Bid consumer cancelled")
+            raise
+        except Exception as e:
+            print(f"❌ [Consumer Error] {e}")
+            continue  # Keep consuming subsequent messages even if an error occurs.
 
 
-async def save_bid_to_db(bid_data: dict):
+async def save_bids_batch_to_db(bids: list[dict]):
     """
-    Persist the bid to the database.
-    
-    This function is called by the Kafka consumer to save bids
-    that were published from the place_bid endpoint.
+    Persist a batch of bids to the database efficiently.
     """
     async with AsyncSessionLocal() as session:
         try:
-            # 1) Insert a new Bid row with idempotency check
-            stmt = Insert(Bid).values(
-                bid_id=bid_data["bid_id"],
-                price=bid_data["amount"],
-                user_id=bid_data["user_id"],
-                auction_id=bid_data["auction_id"]
-            )
+            # 1) Prepare bulk insert.
+            insert_values = [
+                {
+                    "bid_id": b["bid_id"], # UUID used for idempotency protection.
+                    "user_id": b["user_id"],
+                    "auction_id": b["auction_id"],
+                    "price": b["amount"]
+                }
+                for b in bids
+            ]
+
+            # 2) Insert up to 1000 bids with a single query (including idempotency safeguard).
+            stmt = insert(Bid).values(insert_values)
             stmt = stmt.on_conflict_do_nothing(index_elements=['bid_id'])
-            result = await session.execute(stmt)
-
-            if result.rowcount == 0:
-                print(f"⚠️ [Idempotent] Already processed bid ignored: {bid_data['bid_id']}")
-                return
-
-            # 2) Update the Auction's current_price
-            stmt = (
-                update(Auction)
-                .where(Auction.id == bid_data["auction_id"])
-                .values(current_price=bid_data["amount"])
-            )
             await session.execute(stmt)
 
-            # 3) Commit the transaction
+            # 3) Compute the highest bid per auction in Python memory.
+            auction_max_prices = {}
+            for b in bids:
+                aid = b["auction_id"]
+                amt = b["amount"]
+                # Update only when the new amount is higher than the current max.
+                if aid not in auction_max_prices or amt > auction_max_prices[aid]:
+                    auction_max_prices[aid] = amt
+
+            # 4) Update each auction only with the final max amount.
+            # (Even with 1000 bids, only one UPDATE is issued if they belong to one auction.)
+            for aid, max_amt in auction_max_prices.items():
+                update_stmt = (
+                    update(Auction)
+                    .where(Auction.id == aid)
+                    .values(current_price=max_amt)
+                )
+                await session.execute(update_stmt)
+
+            # 5) Commit the transaction in one batch.
             await session.commit()
-            print(
-                f"✅ [DB Saved] Auction {bid_data['auction_id']} updated to {bid_data['amount']}"
-            )
+            print(f"✅ [Batch DB Saved] Successfully inserted bids and updated {len(auction_max_prices)} auctions.")
 
         except Exception as e:
-            # If anything fails, roll back this transaction
             await session.rollback()
-            print(f"❌ [DB Error] Failed to save bid: {e}")
+            print(f"❌ [DB Error] Failed to save batch: {e}")
+            raise

@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bid-service .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bid-service ./cmd/api
 
 # Stage 2: Run
 FROM alpine:latest

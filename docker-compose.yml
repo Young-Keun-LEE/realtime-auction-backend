@@ -150,7 +150,15 @@ services:
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-
+  #4. prometheus service for monitoring
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - auction_net
 volumes:
   postgres_data:
   redis_data:
@@ -159,3 +167,4 @@ volumes:
 networks:
   auction_net:
     driver: bridge
+

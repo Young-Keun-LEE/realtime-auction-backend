@@ -17,13 +17,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
 	// Load configuration
 	cfg := config.Load()
 
-	// Create context	
+	// Create context
 	ctx := context.Background()
 
 	// Initialize Redis
@@ -57,8 +58,10 @@ func main() {
 
 	// Setup Router and API routes
 	r := gin.Default()
-		h := api.NewHandler(db, rdb, pool)
+	h := api.NewHandler(db, rdb, pool)
 	api.RegisterRoutes(r, h)
+
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Create HTTP server
 	server := &http.Server{

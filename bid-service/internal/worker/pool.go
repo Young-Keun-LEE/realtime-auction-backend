@@ -54,16 +54,10 @@ func (wp *Pool) worker(id int) {
 }
 
 func (wp *Pool) processBidTask(task models.BidTask) {
-	log.Printf("⚙️  Worker processing: user_id=%d, auction_id=%d, amount=%d",
-		task.UserID, task.AuctionID, task.Amount)
+	log.Printf("⚙️  Worker processing: bid_id=%d, user_id=%d, auction_id=%d, amount=%d",
+		task.BidID, task.UserID, task.AuctionID, task.Amount)
 
-	bidData := map[string]int{
-		"user_id":    task.UserID,
-		"auction_id": task.AuctionID,
-		"amount":     task.Amount,
-	}
-
-	bidJSON, err := json.Marshal(bidData)
+	bidJSON, err := json.Marshal(task)
 	if err != nil {
 		log.Printf("❌ Failed to marshal bid data: %v", err)
 		return

@@ -6,6 +6,25 @@ Usage: python scripts/cleanup.py
 
 import subprocess
 import sys
+from pathlib import Path
+
+
+def load_env_file() -> dict[str, str]:
+    """Load simple KEY=VALUE pairs from the project .env file."""
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    values: dict[str, str] = {}
+
+    if not env_path.exists():
+        return values
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+
+    return values
 
 
 def run_command(command: list[str], description: str) -> bool:
@@ -22,6 +41,10 @@ def run_command(command: list[str], description: str) -> bool:
 
 def cleanup_postgres() -> bool:
     """Truncate all application tables and reset identity sequences in PostgreSQL."""
+    env_values = load_env_file()
+    postgres_user = env_values.get("POSTGRES_USER", "postgres")
+    postgres_db = env_values.get("POSTGRES_DB", "postgres")
+
     return run_command(
         [
             "docker",
@@ -29,9 +52,9 @@ def cleanup_postgres() -> bool:
             "auction_db",
             "psql",
             "-U",
-            "user",
+            postgres_user,
             "-d",
-            "auction",
+            postgres_db,
             "-c",
             "TRUNCATE bids, auctions, users RESTART IDENTITY CASCADE;",
         ],

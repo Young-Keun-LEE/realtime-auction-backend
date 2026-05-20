@@ -104,11 +104,80 @@ The database is the slowest part of any high-traffic system.
 ---
  
 ## 📊 Performance Benchmarks
- 
-> 🔄 *Results coming soon — load testing in progress.*
- 
+
+> Load test conducted with **Locust** (1,000 concurrent users) against the Go Bid Ingestion API.  
+> Infrastructure monitored in real-time via **Grafana + Prometheus**.  
+> ⚠️ **Test Environment**: All benchmarks were conducted on a local machine (not a production-grade
+> cloud environment). Results reflect the system's architectural efficiency rather than absolute
+> throughput capacity. Cloud deployment benchmarks are planned.
+### Benchmark Screenshots
+
+### Grafana Monitoring Dashboard
+
+![Grafana Dashboard](./images/Grafana.png)
+
+### Locust Load Test
+
+![Locust Benchmark](./images/Locust.png)
+### Load Test Summary
+
+| Metric | Result |
+|---|---|
+| **Concurrent Users** | 1,000 |
+| **Sustained RPS** | ~300.9 req/s |
+| **Failure Rate** | 0% |
+| **p99 Latency (Go Bid API)** | ~4.95 ms |
+| **p95 Latency (Go Bid API)** | ~4.75 ms |
+| **p95 Ramp-up Spike** | ~32 ms (stabilizes within ~2 min) |
+| **Avg Response Time (stable)** | < 2 ms |
+| **Redis Hot-Key Throughput** | ~595–610 ops/s |
+| **Kafka Consumer Lag (max)** | 4 messages |
+| **PostgreSQL Active Connections** | ≤ 2 |
+| **PostgreSQL TPS** | ~100 tps |
+| **5xx Error Rate** | 0 |
+
+### Key Observations
+
+- **Zero failures** across the entire ~8-minute sustained load test at 1,000 concurrent users.
+- **Sub-5ms p99** held consistently after ramp-up, validating that atomic Lua + in-memory
+  validation is not the bottleneck at this load level.
+- **Ramp-up spike reduced to ~32ms** (from ~40ms in previous run) — consistent with Go Worker
+  Pool saturation resolving as goroutines catch up, not a Redis or DB issue.
+- **Kafka Consumer Lag capped at 4 messages** — Python worker maintained pace with the Go
+  producer under sustained 300+ RPS.
+- **PostgreSQL shielded entirely from bid traffic** — only ≤2 active connections and ~100 TPS
+  observed, confirming the Kafka write-behind buffer absorbed all load as designed.
+- **Redis memory stable** at 1.58–1.64 MB with no unbounded growth throughout the test.
+
+### Bottleneck Analysis
+
+| Component | Assessment | Rationale |
+|---|---|---|
+| **Go Worker Pool → Kafka produce** | Primary bottleneck candidate | Bounded queue (1,000) triggers fail-fast under burst; visible as p95 spike (~32ms) during ramp-up before stabilizing |
+| **Python Worker → PostgreSQL** | Secondary bottleneck | Batch flush interval (1s) couples DB write latency to Kafka lag oscillation (0–4 msgs) |
+| **Redis Lua hot-key** | Not a bottleneck | Throughput stable at ~595–610 ops/s; single-step atomic operation completes in microseconds |
+
+> The ramp-up spike followed by rapid stabilization under 5ms is the key signal:
+> it indicates Worker Pool saturation at burst onset — not a systemic bottleneck.
+
+**Next steps for production hardening:**
+- Tune Worker Pool size and queue depth based on target cloud instance CPU cores
+- Add Kafka producer retry with exponential backoff instead of hard fail-fast drop
+- Benchmark on AWS EC2 to establish absolute throughput ceiling
+- Instrument Python worker with Prometheus metrics to measure DB flush latency directly
+
+### Test Configuration
+
+| Parameter | Value |
+|---|---|
+| Tool | Locust |
+| Target Host | `http://localhost:8000` |
+| Peak Users | 1,000 |
+| Ramp-up Duration | ~2 min |
+| Sustained Test Duration | ~8 min |
+| Endpoint Under Test | `POST /api/v1/bid` |
+
 ---
- 
 ## 🚀 Quick Start
  
 Spin up the entire microservices ecosystem locally using Docker Compose.

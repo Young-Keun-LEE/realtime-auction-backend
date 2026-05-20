@@ -14,7 +14,7 @@
       "gridPos": {"x": 0, "y": 0, "w": 12, "h": 6},
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, method, route))",
+          "expr": "histogram_quantile(0.99, sum by (le, method, route) (rate(http_request_duration_seconds_bucket[5m])))",
           "refId": "A"
         }
       ]
@@ -26,7 +26,7 @@
       "gridPos": {"x": 12, "y": 0, "w": 12, "h": 6},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, method, route))",
+          "expr": "histogram_quantile(0.95, sum by (le, method, route) (rate(http_request_duration_seconds_bucket[5m])))",
           "refId": "A"
         }
       ]
@@ -37,7 +37,7 @@
       "id": 3,
       "gridPos": {"x": 0, "y": 6, "w": 12, "h": 6},
       "targets": [
-        {"expr": "sum(rate(http_requests_total[1m])) by (method, route)", "refId": "A"}
+        {"expr": "sum by (method, route) (rate(http_requests_total[1m]))", "refId": "A"}
       ]
     },
     {
@@ -46,18 +46,18 @@
       "id": 4,
       "gridPos": {"x": 12, "y": 6, "w": 12, "h": 6},
       "targets": [
-        {"expr": "sum(rate(http_requests_total{code_class=\"5xx\"}[5m])) by (route)", "refId": "A"}
+        {"expr": "sum by (route) (rate(http_requests_total{code_class=\"5xx\"}[5m]))", "refId": "A"}
       ]
     },
     {
       "type": "timeseries",
-      "title": "Kafka Messages In (rate)",
+      "title": "Kafka Consumer Lag by Group",
       "id": 5,
       "gridPos": {"x": 0, "y": 12, "w": 12, "h": 6},
       "targets": [
-        {"expr": "rate(kafka_server_brokertopicmetrics_messagesin_total[1m])", "refId": "A"}
+        {"expr": "sum by (consumergroup) (kafka_consumergroup_lag_sum)", "refId": "A"}
       ],
-      "description": "Adjust metric name if your Kafka exporter uses different metric names."
+      "description": "Uses kafka-exporter consumer lag metrics. Requires at least one active consumer group."
     },
     {
       "type": "timeseries",
@@ -85,21 +85,21 @@
       "id": 8,
       "gridPos": {"x": 0, "y": 18, "w": 12, "h": 6},
       "targets": [
-        {"expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "refId": "A"}
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))", "refId": "A"}
       ]
     },
     {
       "type": "timeseries",
-      "title": "Redis Hot Key Throughput (req/s)",
+      "title": "Redis Auction Price Hot-Key Throughput",
       "id": 9,
       "gridPos": {"x": 12, "y": 18, "w": 12, "h": 6},
       "targets": [
         {
-          "expr": "# Replace metric/key labels as needed; example by command:\nrate(redis_commands_processed_total{command=\"GET\"}[1m])",
+          "expr": "sum(rate(redis_auction_price_access_total[1m]))",
           "refId": "A"
         }
       ],
-      "description": "If your redis_exporter exposes per-key metrics, replace the expression above with the appropriate label (e.g. key=\"myhotkey\")."
+      "description": "App-side counter for the auction price Redis hot-key path. This is the exact throughput for the key family used by bid processing."
     },
     {
       "type": "timeseries",
@@ -113,13 +113,13 @@
     },
     {
       "type": "timeseries",
-      "title": "Kafka Consumer Lag by Group",
+      "title": "Kafka Consumer Lag by Topic",
       "id": 11,
       "gridPos": {"x": 12, "y": 24, "w": 12, "h": 6},
       "targets": [
-        {"expr": "sum(kafka_consumergroup_lag) by (group)", "refId": "A"}
+        {"expr": "sum by (topic) (kafka_consumergroup_lag_sum)", "refId": "A"}
       ],
-      "description": "Shows total consumer lag per consumer group. Adjust metric name if your exporter uses a different metric."
+      "description": "Shows total lag per topic across consumer groups. Uses kafka-exporter lag metrics."
     },
     {
       "type": "timeseries",
@@ -127,9 +127,9 @@
       "id": 12,
       "gridPos": {"x": 0, "y": 30, "w": 12, "h": 6},
       "targets": [
-        {"expr": "pg_stat_activity_count", "refId": "A"}
+        {"expr": "sum by (datname) (pg_stat_activity_count{state=\"active\"})", "refId": "A"}
       ],
-      "description": "Active DB connections. If your exporter exposes a different metric, replace with that metric (eg. pg_database_size or pg_stat_activity_count)."
+      "description": "Active DB connections by database. Uses postgres-exporter stat_activity metrics."
     },
     {
       "type": "timeseries",
@@ -137,9 +137,9 @@
       "id": 13,
       "gridPos": {"x": 12, "y": 30, "w": 12, "h": 6},
       "targets": [
-        {"expr": "sum(rate(pg_stat_database_xact_commit[1m]) + rate(pg_stat_database_xact_rollback[1m])) by (datname)", "refId": "A"}
+        {"expr": "sum by (datname) (rate(pg_stat_database_xact_commit[1m]) + rate(pg_stat_database_xact_rollback[1m]))", "refId": "A"}
       ],
-      "description": "Commits+rollbacks per second by database. Adjust metric names if different."
+      "description": "Commits plus rollbacks per second by database. Uses postgres-exporter stat_database metrics."
     }
   ],
   "annotations": {"list": []},

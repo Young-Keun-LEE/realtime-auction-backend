@@ -54,7 +54,7 @@ func (wp *Pool) worker(id int) {
 }
 
 func (wp *Pool) processBidTask(task models.BidTask) {
-	log.Printf("⚙️  Worker processing: bid_id=%d, user_id=%d, auction_id=%d, amount=%d",
+	log.Printf("⚙️  Worker processing: bid_id=%s, user_id=%d, auction_id=%d, amount=%d",
 		task.BidID, task.UserID, task.AuctionID, task.Amount)
 
 	bidJSON, err := json.Marshal(task)

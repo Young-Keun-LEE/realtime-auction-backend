@@ -47,8 +47,10 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 
 	auctionPriceKey := fmt.Sprintf("auction:%d:price", req.AuctionID)
 
+	redisAuctionPriceAccessTotal.WithLabelValues("eval", "attempt").Inc()
 	result, err := repository.EvalBidScript(ctx, h.rdb, models.BidLuaScript, auctionPriceKey, req.Amount)
 	if err != nil {
+		redisAuctionPriceAccessTotal.WithLabelValues("eval", "error").Inc()
 		log.Printf("❌ Redis Lua script error: %v", err)
 		if isTemporaryDependencyError(err) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"detail": "Service temporarily unavailable"})
@@ -57,6 +59,7 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Internal server error"})
 		return
 	}
+	redisAuctionPriceAccessTotal.WithLabelValues("eval", "success").Inc()
 
 	if result == -1 {
 		log.Printf("🔍 Cache miss for auction %d, querying database...", req.AuctionID)
@@ -78,6 +81,7 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 
 		if req.Amount <= auction.CurrentPrice {
 			log.Printf("⚠️  Bid too low: %d <= %d", req.Amount, auction.CurrentPrice)
+			redisAuctionPriceAccessTotal.WithLabelValues("set", "seed").Inc()
 			_ = repository.SetAuctionPrice(ctx, h.rdb, auctionPriceKey, auction.CurrentPrice)
 			c.JSON(http.StatusConflict, gin.H{
 				"detail":        fmt.Sprintf("Bid amount must be higher than current price (%d)", auction.CurrentPrice),
@@ -88,12 +92,15 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 		}
 
 		// Attempt to seed Redis cache
+		redisAuctionPriceAccessTotal.WithLabelValues("set", "seed").Inc()
 		_ = h.rdb.SetNX(ctx, auctionPriceKey, auction.CurrentPrice, 0)
 
 		// Get the actual current price from Redis (might have been set by us or another client)
 		// This ensures atomicity - we check the actual Redis value, not just the DB value
+		redisAuctionPriceAccessTotal.WithLabelValues("get", "attempt").Inc()
 		actualCurrentPrice, err := repository.GetAuctionPrice(ctx, h.rdb, auctionPriceKey)
 		if err != nil {
+			redisAuctionPriceAccessTotal.WithLabelValues("get", "error").Inc()
 			log.Printf("❌ Failed to get auction price from cache after seed: %v", err)
 			if isTemporaryDependencyError(err) {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"detail": "Service temporarily unavailable"})
@@ -102,6 +109,7 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Internal server error"})
 			return
 		}
+		redisAuctionPriceAccessTotal.WithLabelValues("get", "success").Inc()
 
 		// Re-check the bid amount against the actual current price
 		if req.Amount <= actualCurrentPrice {
@@ -114,8 +122,10 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 			return
 		}
 
+		redisAuctionPriceAccessTotal.WithLabelValues("eval", "attempt").Inc()
 		result, err = repository.EvalBidScript(ctx, h.rdb, models.BidLuaScript, auctionPriceKey, req.Amount)
 		if err != nil {
+			redisAuctionPriceAccessTotal.WithLabelValues("eval", "error").Inc()
 			log.Printf("❌ Redis Lua script error after cache seed: %v", err)
 			if isTemporaryDependencyError(err) {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"detail": "Service temporarily unavailable"})
@@ -135,12 +145,18 @@ func (h *Handler) PlaceBid(c *gin.Context) {
 			})
 			return
 		}
+		redisAuctionPriceAccessTotal.WithLabelValues("eval", "success").Inc()
 
 		if err := repository.SetAuctionPrice(ctx, h.rdb, auctionPriceKey, req.Amount); err != nil {
+			redisAuctionPriceAccessTotal.WithLabelValues("set", "error").Inc()
 			log.Printf("❌ Failed to update Redis cache after accepting bid: %v", err)
+		} else {
+			redisAuctionPriceAccessTotal.WithLabelValues("set", "success").Inc()
 		}
 	} else if result == 0 {
+		redisAuctionPriceAccessTotal.WithLabelValues("get", "attempt").Inc()
 		currentPrice, _ := repository.GetAuctionPrice(ctx, h.rdb, auctionPriceKey)
+		redisAuctionPriceAccessTotal.WithLabelValues("get", "success").Inc()
 		log.Printf("⚠️  Bid rejected: %d <= current price %d", req.Amount, currentPrice)
 		c.JSON(http.StatusConflict, gin.H{
 			"detail":        fmt.Sprintf("Bid amount must be higher than the current price (%d)", currentPrice),

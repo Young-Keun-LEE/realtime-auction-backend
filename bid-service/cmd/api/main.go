@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"fmt"
 
 	"bid-service/config"
 	"bid-service/internal/api"
@@ -18,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 func main() {
@@ -56,8 +59,42 @@ func main() {
 	pool.Start()
 	defer pool.Close()
 
+	// Register Prometheus metrics and middleware
+	var httpRequests = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "Total HTTP requests",
+		},
+		[]string{"method", "route", "code_class"},
+	)
+
+	var httpRequestDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_duration_seconds",
+			Help:    "Histogram of HTTP request durations in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "route"},
+	)
+
+	prometheusMiddleware := func() gin.HandlerFunc {
+		return func(c *gin.Context) {
+			start := time.Now()
+			c.Next()
+			duration := time.Since(start).Seconds()
+			route := c.FullPath()
+			if route == "" {
+				route = "unknown"
+			}
+			codeClass := fmt.Sprintf("%dxx", c.Writer.Status()/100)
+			httpRequests.WithLabelValues(c.Request.Method, route, codeClass).Inc()
+			httpRequestDuration.WithLabelValues(c.Request.Method, route).Observe(duration)
+		}
+	}
+
 	// Setup Router and API routes
 	r := gin.Default()
+	r.Use(prometheusMiddleware())
 	h := api.NewHandler(db, rdb, pool)
 	api.RegisterRoutes(r, h)
 

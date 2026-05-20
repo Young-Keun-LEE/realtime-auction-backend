@@ -1,0 +1,148 @@
+{
+  "uid": "bid-service-dashboard",
+  "title": "Bid Service - Metrics",
+  "tags": ["auction","service","bid"],
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "p99 Request Latency by Route (5m)",
+      "id": 1,
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 6},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, method, route))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 Request Latency by Route (5m)",
+      "id": 2,
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 6},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, method, route))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request Rate (req/s) by Route",
+      "id": 3,
+      "gridPos": {"x": 0, "y": 6, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "sum(rate(http_requests_total[1m])) by (method, route)", "refId": "A"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "5xx Error Rate by Route (req/s)",
+      "id": 4,
+      "gridPos": {"x": 12, "y": 6, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "sum(rate(http_requests_total{code_class=\"5xx\"}[5m])) by (route)", "refId": "A"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Messages In (rate)",
+      "id": 5,
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "rate(kafka_server_brokertopicmetrics_messagesin_total[1m])", "refId": "A"}
+      ],
+      "description": "Adjust metric name if your Kafka exporter uses different metric names."
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis Memory Used",
+      "id": 6,
+      "gridPos": {"x": 12, "y": 12, "w": 6, "h": 6},
+      "targets": [
+        {"expr": "redis_memory_used_bytes", "refId": "A"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Postgres Exporter Up",
+      "id": 7,
+      "gridPos": {"x": 18, "y": 12, "w": 6, "h": 6},
+      "targets": [
+        {"expr": "up{job=\"postgres-exporter\"}", "refId": "A"}
+      ],
+      "options": {"orientation": "auto"}
+    }
+    ,
+    {
+      "type": "timeseries",
+      "title": "Go Bid API p99 (overall, 5m)",
+      "id": 8,
+      "gridPos": {"x": 0, "y": 18, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "refId": "A"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis Hot Key Throughput (req/s)",
+      "id": 9,
+      "gridPos": {"x": 12, "y": 18, "w": 12, "h": 6},
+      "targets": [
+        {
+          "expr": "# Replace metric/key labels as needed; example by command:\nrate(redis_commands_processed_total{command=\"GET\"}[1m])",
+          "refId": "A"
+        }
+      ],
+      "description": "If your redis_exporter exposes per-key metrics, replace the expression above with the appropriate label (e.g. key=\"myhotkey\")."
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis CPU (user+system) rate",
+      "id": 10,
+      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "rate(redis_cpu_sys_seconds_total[1m]) + rate(redis_cpu_user_seconds_total[1m])", "refId": "A"}
+      ],
+      "description": "Sum of Redis process CPU user+system. Adjust metric names if your exporter differs."
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Consumer Lag by Group",
+      "id": 11,
+      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "sum(kafka_consumergroup_lag) by (group)", "refId": "A"}
+      ],
+      "description": "Shows total consumer lag per consumer group. Adjust metric name if your exporter uses a different metric."
+    },
+    {
+      "type": "timeseries",
+      "title": "Postgres Connections (active)",
+      "id": 12,
+      "gridPos": {"x": 0, "y": 30, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "pg_stat_activity_count", "refId": "A"}
+      ],
+      "description": "Active DB connections. If your exporter exposes a different metric, replace with that metric (eg. pg_database_size or pg_stat_activity_count)."
+    },
+    {
+      "type": "timeseries",
+      "title": "Postgres Transactions/sec",
+      "id": 13,
+      "gridPos": {"x": 12, "y": 30, "w": 12, "h": 6},
+      "targets": [
+        {"expr": "sum(rate(pg_stat_database_xact_commit[1m]) + rate(pg_stat_database_xact_rollback[1m])) by (datname)", "refId": "A"}
+      ],
+      "description": "Commits+rollbacks per second by database. Adjust metric names if different."
+    }
+  ],
+  "annotations": {"list": []},
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"}
+}

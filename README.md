@@ -96,7 +96,7 @@ The database is the slowest part of any high-traffic system.
 ## 🛡️ DevOps & Security Engineering
 | Area | Implementation |
 |---|---|
-| **CI / CD** | **GitHub Actions** — Every push to `main` triggers an automated workflow that multi-stage builds and pushes microservice Docker images (Go/Python) to Docker Hub. *The CD deployment phase is deliberately archived during development to minimize unnecessary cloud resource usage, focusing instead on maintaining a highly portable, environment-agnostic architecture.* |
+| **CI / CD** | **GitHub Actions** — Every push to `main` triggers an automated workflow that builds and pushes microservice Docker images (Go/Python) to Docker Hub. *The CD deployment phase is deliberately archived during development to minimize unnecessary cloud resource usage, focusing instead on maintaining a highly portable, environment-agnostic architecture.* |
 | **Cloud Readiness** | **12-Factor & Local-First Architecture** — The entire infrastructure (Go, Python, Redis, Kafka, PostgreSQL) is fully containerized via standard `docker-compose`. Secrets are strictly isolated from the source code, and a strict production environment variable validation mechanism is built-in, making the system 100% portable and ready to deploy instantly onto AWS ECS (Fargate) or EKS. |
 | **Observability** | **Container Health Checks & Monitoring** — Dedicated health check endpoints (`/health`) are implemented across all microservices for zero-downtime container orchestration readiness. Core application metrics are exposed via Prometheus and visualized through Grafana dashboards to monitor high-concurrency workloads. |
 ---

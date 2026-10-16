@@ -1,8 +1,8 @@
 # ⚡ Real-Time Auction Backend
  
-> A distributed, event-driven backend system engineered for extreme contention on single auction items ("hot keys").
+> A distributed, event-driven backend prototype designed to explore concurrency control and asynchronous persistence in real-time auction systems.
  
-In environments where thousands of bids arrive per second, traditional database-first approaches fail due to locking overhead. This project demonstrates a production-grade solution using **Atomic In-Memory Validation** and **Asynchronous Write-Behind Persistence**.
+This project uses Redis Lua scripts for atomic bid validation and price updates, alongside Kafka-based asynchronous persistence and batched PostgreSQL writes. It also includes a bounded Go worker pool, WebSocket notifications, and local load testing to evaluate system behavior under concurrent workloads.
  
 ---
  
@@ -11,27 +11,29 @@ In environments where thousands of bids arrive per second, traditional database-
 The system utilizes a **polyglot microservices** approach to optimize for specific workloads: **Go** for high-throughput ingestion and **Python (FastAPI)** for asynchronous broadcasting and background processing.
  
 ```mermaid
+
 graph TD
     Client[Client]
- 
     GoAPI[Go Bid Service]
+    Pool[Bounded Go Worker Pool]
     Redis[(Redis)]
     Kafka[(Kafka)]
-    Worker[Python Worker]
+    Worker[Python Persistence Worker]
     DB[(PostgreSQL)]
-    WS[WebSocket Server]
- 
+    WS[FastAPI WebSocket Server]
+
     Client -->|Bid Request| GoAPI
-    GoAPI -->|Atomic Validate| Redis
-    GoAPI -->|Publish Event| Kafka
-    GoAPI -->|Notify| Redis
- 
+    GoAPI -->|Validate Bid| Redis
+    GoAPI -->|Submit Task| Pool
+    Pool -->|Publish Event| Kafka
+    Pool -->|Publish Notification| Redis
     Redis -->|Pub/Sub| WS
     WS -->|Broadcast| Client
- 
-    Kafka -->|Consume| Worker
-    Worker -->|Batch Write| DB
+    Kafka -->|Consume Events| Worker
+    Worker -->|Batch Insert| DB
+
 ```
+
  
 ---
  
@@ -45,7 +47,7 @@ In a high-frequency auction, multiple round-trips to acquire and release locks (
 |---|---|
 | **Intent** | We need Atomic State Transitions. |
 | **Choice** | By embedding validation logic in a Lua script, the entire "Check-and-Set" operation happens in a **single atomic step** inside Redis. |
-| **Benefit** | Eliminates race conditions entirely without the overhead of network-intensive locking protocols, keeping our **p99 latency sub-100ms**. |
+| **Benefit** | Combines bid validation and price updates into a single atomic Redis script execution, preventing concurrent operations from interleaving within the script. |
  
 ### 2. Why a Polyglot MSA (Go + Python)?
  
@@ -61,8 +63,9 @@ One size does not fit all. We decoupled the system to leverage the strengths of 
 Directly calling Kafka for every request can slow down the API if Kafka experiences a momentary lag.
  
 - **Design:** The Go service implements a Worker Pool with a **Bounded Task Queue (Size: 1,000)**.
-- **Backpressure Handling:** When the queue reaches its depth limit, the system gracefully drops new tasks to protect the service from crashing *(Fail-fast)*.
-- **Decoupling:** Separates the critical path (validating the bid) from the non-critical path (persisting the bid), ensuring the user receives an immediate response.
+- **Queue Saturation:** When the queue is full or the request context is canceled, task submission may be dropped. The current implementation logs these events but does not propagate submission failures to the HTTP handler.
+- **Decoupling:** Separates bid validation from asynchronous event publishing and downstream processing, reducing the need for the HTTP handler to perform these operations synchronously.
+- **Limitation:** Dropped tasks and Kafka publishing failures are not automatically retried by the current worker pool. The system does not guarantee that every accepted bid is persisted.
  
 ### 4. Why Kafka for Persistence?
  
@@ -70,7 +73,9 @@ The database is the slowest part of any high-traffic system.
  
 - **Intent:** Shield the Database.
 - **Choice:** Kafka acts as a massive buffer. The Go Producer sends validated bids to Kafka, and the Python Consumer fetches them in batches.
-- **Ordering & Recovery:** Using `AuctionID` as the partition key guarantees all bids for one item are processed **in order**. If the database goes down, Kafka holds the data until it's back online, ensuring **Zero Data Loss**.
+- **Duplicate Protection:** A unique bid UUID and ON CONFLICT DO NOTHING prevent duplicate database inserts for the same bid ID.
+- **Failure Handling:** The consumer uses manual offset commits, committing after successful database processing. Failed database operations can therefore be retried through message redelivery, subject to consumer behavior and Kafka retention.
+- **Limitations:** The current producer configuration does not guarantee partition assignment by auction ID or per-auction message ordering. End-to-end zero-data-loss delivery is not guaranteed because tasks may be dropped before successful publication to Kafka.
  
 ---
  
@@ -96,9 +101,9 @@ The database is the slowest part of any high-traffic system.
 ## 🛡️ DevOps & Security Engineering
 | Area | Implementation |
 |---|---|
-| **CI / CD** | **GitHub Actions** — Every push to `main` triggers an automated workflow that builds and pushes microservice Docker images (Go/Python) to Docker Hub. *The CD deployment phase is deliberately archived during development to minimize unnecessary cloud resource usage, focusing instead on maintaining a highly portable, environment-agnostic architecture.* |
-| **Cloud Readiness** | **12-Factor & Local-First Architecture** — The entire infrastructure (Go, Python, Redis, Kafka, PostgreSQL) is fully containerized via standard `docker-compose`. Secrets are strictly isolated from the source code, and a strict production environment variable validation mechanism is built-in, making the system 100% portable and ready to deploy instantly onto AWS ECS (Fargate) or EKS. |
-| **Observability** | **Container Health Checks & Monitoring** — Dedicated health check endpoints (`/health`) are implemented across all microservices for zero-downtime container orchestration readiness. Core application metrics are exposed via Prometheus and visualized through Grafana dashboards to monitor high-concurrency workloads. |
+| **CI / CD** | **GitHub Actions** — Builds Go and Python service images and pushes them to Docker Hub on pushes to main. Automated cloud deployment is not currently enabled.* |
+| **Local Infrastructure** | **Docker Compose** — Runs the application services and supporting infrastructure locally, including Redis, Kafka, and PostgreSQL. The Compose setup provides a reproducible local development environment. |
+| **Observability** | **Prometheus & Grafana** — Exposes application metrics for monitoring and visualizing behavior under load. Health-check endpoints support service health monitoring. |
 ---
  
 ## 📊 Performance Benchmarks
